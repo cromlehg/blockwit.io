@@ -14,6 +14,7 @@ import models.ConfirmationStatus
 import models.Roles
 import play.api.db.slick.DatabaseConfigProvider
 import play.api.db.slick.HasDatabaseConfigProvider
+import models.TelegramAccount
 
 /**
  *
@@ -38,8 +39,28 @@ class DAO @Inject() (protected val dbConfigProvider: DatabaseConfigProvider)(imp
 
   def pages(size: Int): Int = pages(size, AppConstants.DEFAULT_PAGE_SIZE)
 
+  def updateOrCreateTelegramLogin(telegramAccount: TelegramAccount): Future[Boolean] =
+    db.run(telegramAccounts.insertOrUpdate(telegramAccount).transactionally).map(_ == 1)
+
+  def tryToRemoveTelegramLogin(id: Long): Future[Boolean] =
+    db.run(telegramAccounts.filter(_.accountId === id).delete.transactionally).map(_ == 1)
+
   def setAccountStatus(accountId: Long, status: Int) =
     db.run(accounts.filter(_.id === accountId).map(_.accountStatus).update(status).transactionally).map(_ == 1)
+
+  def getUserProfileInfoByLogin(login: String): Future[Option[models.Account]] = {
+    val query = for {
+      account <- accounts.filter(_.login === login).result.head
+      telegramAccountOpt <- telegramAccounts.filter(_.accountId === account.id).result.headOption
+      roles <- roles.filter(_.userId === account.id).map(_.role).result
+    } yield (account, telegramAccountOpt, roles)
+    db.run(query) map {
+      case (account, telegramAccountOpt, roles) =>
+        Some(account.copy(
+          roles = roles,
+          telegramAccountOpt = telegramAccountOpt))
+    }
+  }
 
   def pages(size: Int, pageSize: Int): Int = {
     if (size == 0) 0 else {
@@ -47,6 +68,30 @@ class DAO @Inject() (protected val dbConfigProvider: DatabaseConfigProvider)(imp
       if (fSize * pageSize < size) fSize + 1 else fSize
     }
   }
+
+  def getAdminAccounts(filterOpt: Option[String], pageId: Int): Future[Seq[models.Account]] =
+    filterOpt.fold {
+      db.run(
+        accounts
+          .joinLeft(telegramAccounts).on(_.id === _.accountId)
+          .sortBy(_._1.id.desc)
+          .drop(if (pageId > 0) pageSize * (pageId - 1) else 0)
+          .take(pageSize)
+          .result) map (_ map {
+          case (a, t) => a.copy(telegramAccountOpt = t)
+        })
+    } { filter =>
+      db.run(
+        accounts
+          .filter(_.login like ("%" + filter + "%"))
+          .joinLeft(telegramAccounts).on(_.id === _.accountId)
+          .sortBy(_._1.id.desc)
+          .drop(if (pageId > 0) pageSize * (pageId - 1) else 0)
+          .take(pageSize)
+          .result) map (_ map {
+          case (a, t) => a.copy(telegramAccountOpt = t)
+        })
+    }
 
   def getAccounts(filterOpt: Option[String], pageId: Int): Future[Seq[models.Account]] =
     filterOpt.fold {

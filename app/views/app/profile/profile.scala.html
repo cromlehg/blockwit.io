@@ -1,0 +1,35 @@
+@(account: models.Account)(implicit flash: Flash, messages: Messages, ac: controllers.AppContext)
+
+@app.common.main(messages("app.header.menu.profile")) { } {
+  @base.common.components.container() {
+  
+    <h2 class="mb-4 mt-2">@messages("app.profile")</h2>
+  
+    @base.common.components.table(Seq("option", "value"), 
+      ac.authorizedOpt.fold { 
+	    Seq(
+	      Seq(messages("app.profile.login"), account.login)
+	    )
+      } { actor =>
+        if(actor.id == account.id || actor.isAdmin) {
+          account.telegramAccountOpt.fold { 
+            Seq(
+              Seq(messages("app.profile.login"), account.login),
+    	      Seq(messages("app.profile.email"), account.email)
+    	    )          	
+          } { telegramAccount =>
+            Seq(
+              Seq(messages("app.profile.login"), account.login),
+    	      Seq(messages("app.profile.email"), account.email),
+    	      Seq(messages("app.profile.telegram.login"), telegramAccount.login),
+    	    )          	          
+          }
+    	} else {
+    	  Seq(
+    	    Seq(messages("app.profile.login"), account.login)
+    	  )    	
+    	}
+      }
+    )
+  }
+} { }

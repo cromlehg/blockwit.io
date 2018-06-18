@@ -6,9 +6,10 @@
    
     @app.common.paginationControlForAccounts(pageId, pagesCount, filterOpt)
     <div class="row">
-    @base.common.components.table(Seq("id", "login", "registered", "status", "actions"), accounts.map( account => Seq(
+    @base.common.components.table(Seq("id", "login", "telegram login", "registered", "status", "actions"), accounts.map( account => Seq(
     	account.id, 
-    	"@" + account.loginMatchedBy(filterOpt), 
+    	"@" + account.loginMatchedBy(filterOpt),
+    	account.telegramAccountOpt.map("@" + _.login).getOrElse(""), 
     	account.createdPrettyTime,
     	if(account.accountStatus == models.AccountStatus.NORMAL) {
     	  Html("<span class=\"badge badge-success\">normal</span>")

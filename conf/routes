@@ -15,6 +15,13 @@ GET    /app/logout                                                controllers.Ac
 
 GET    /app/register/user                                         controllers.AccountsController.registerUser
 
+GET    /app/profile/@:login                                       controllers.AccountsController.profile(login: String)
+
+GET    /app/profile/@:login/settings                              controllers.AccountsController.settings(login: String)
+
++ nocsrf
+POST   /app/profile/@:login/settings                              controllers.AccountsController.settingsProcess(login: String)
+
 GET    /app/admin/options                                         controllers.OptionsController.options
 
 GET    /app/admin/accounts/page/:pageId                           controllers.AccountsController.adminAccounts(pageId: Int, filter: Option[String])

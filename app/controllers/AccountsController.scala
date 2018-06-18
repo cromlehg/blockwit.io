@@ -16,18 +16,21 @@ import play.api.data.Forms.boolean
 import play.api.data.Forms.email
 import play.api.data.Forms.mapping
 import play.api.data.Forms.nonEmptyText
+import play.api.data.Forms.text
+import play.api.data.Forms.optional
 import play.api.mvc.ControllerComponents
 import play.api.mvc.Flash
 import play.api.mvc.Request
 import play.api.mvc.Result
 import play.twirl.api.Html
 import play.Logger
+import models.TelegramAccount
 
 @Singleton
 class AccountsController @Inject() (
-    cc: ControllerComponents, 
-    dao: DAO, 
-    config: Config)(implicit ec: ExecutionContext)
+  cc: ControllerComponents,
+  dao: DAO,
+  config: Config)(implicit ec: ExecutionContext)
   extends RegisterCommonAuthorizable(cc, dao, config) {
 
   import scala.concurrent.Future.{ successful => future }
@@ -62,11 +65,6 @@ class AccountsController @Inject() (
     override val email: String,
     override val login: String) extends RegData
 
-  case class RegDataCompany(
-    override val email: String,
-    override val login: String,
-    val companyName: String) extends RegData
-
   val authForm = Form(
     mapping(
       "email" -> nonEmptyText(3, 50),
@@ -76,6 +74,64 @@ class AccountsController @Inject() (
     mapping(
       "email" -> email,
       "login" -> loginVerifying)(RegDataUser.apply)(RegDataUser.unapply))
+
+  case class SettingsData(val login: String, val email: String, val telegramLogin: Option[String])
+
+  val settingsForm = Form(
+    mapping(
+      "login" -> nonEmptyText(3, 50),
+      "email" -> nonEmptyText(4, 100),
+      "telegramLogin" -> optional(text))(SettingsData.apply)(SettingsData.unapply))
+
+  def settings(login: String) = Action.async { implicit request =>
+    implicit val ac = new AppContext()
+    accessToAccount(login) { a =>
+      future(Ok(views.html.app.profile.settings(
+        a,
+        settingsForm.fill {
+          SettingsData(
+            a.login,
+            a.email,
+            a.telegramAccountOpt.map(_.login))
+        })))
+    }
+  }
+
+  def settingsProcess(login: String) = Action.async { implicit request =>
+    implicit val ac = new AppContext()
+    accessToAccount(login) { a =>
+      settingsForm.bindFromRequest.fold(
+        formWithErrors => future(BadRequest(views.html.app.profile.settings(a, formWithErrors))), {
+          data =>
+            data.telegramLogin.fold {
+              dao.tryToRemoveTelegramLogin(a.id).map { _ =>
+                Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully removed!")
+              }
+            } { telLogin =>
+              if (telLogin.trim.isEmpty) {
+                dao.tryToRemoveTelegramLogin(a.id).map { _ =>
+                  Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully removed!")
+                }
+              } else {
+                dao.updateOrCreateTelegramLogin(TelegramAccount(a.id, telLogin)).map { _ =>
+                  Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully updated!")
+                }
+              }
+            }
+        })
+    }
+  }
+
+  def profile(login: String) = Action.async { implicit request =>
+    implicit val ac = new AppContext()
+    optionalAuthorizedNotLocked { actorOpt =>
+      dao.getUserProfileInfoByLogin(login) flatMap {
+        _.fold(future(BadRequest("Account with login " + login + " not found!"))) { a =>
+          future(Ok(views.html.app.profile.profile(a)))
+        }
+      }
+    }
+  }
 
   def login = Action.async { implicit request =>
     implicit val ac = new AppContext()
@@ -192,7 +248,7 @@ class AccountsController @Inject() (
       onlyAdmin(a =>
         dao.getAccountsPagesCount(filterOpt) flatMap { pagesCount =>
           if (pageId > pagesCount) future(BadRequest("Page not found " + pageId)) else
-            dao.getAccounts(filterOpt, pageId) map { accounts =>
+            dao.getAdminAccounts(filterOpt, pageId) map { accounts =>
               Ok(views.html.app.adminAccounts(
                 a,
                 accounts,

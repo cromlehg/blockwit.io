@@ -6,20 +6,30 @@
     </a>
     <div class="collapse navbar-collapse" id="navbarCollapse">
       <ul class="navbar-nav mr-auto">
-        @if(ac.authorizedOpt.isDefined) {
-          @if(ac.authorizedOpt.get.isAdmin) {          
-            @base.common.menuItem(active, messages("app.header.menu.options")  , routes.OptionsController.options)
-            @base.common.menuItem(active, messages("app.header.menu.accounts") , routes.AccountsController.adminAccounts(1, None))
-          }
-        } else {         
-        }      
-      </ul>
+        @ac.authorizedOpt.fold {
+        } { actor =>
+          @if(actor.isAdmin) {          
+            @base.common.menuItem(active, messages("app.header.menu.options"),  routes.OptionsController.options)
+            @base.common.menuItem(active, messages("app.header.menu.accounts"), routes.AccountsController.adminAccounts(1, None))
+          }        
+        }
+      </ul>      
+      
       <ul class="navbar-nav ml-auto">
-        @if(ac.authorizedOpt.isDefined) {
-          @base.common.menuItem(active, messages("app.header.menu.logout")     , routes.AccountsController.logout(), Some("sign-out-alt"))
-        } else {         
+        @ac.authorizedOpt.fold { 
           @base.common.menuItem(active, messages("app.header.menu.signup")     , routes.AccountsController.registerUser(), Some("user-plus"))
-          @base.common.menuItem(active, messages("app.header.menu.signin")     , routes.AccountsController.login(), Some("sign-in-alt"))
+          @base.common.menuItem(active, messages("app.header.menu.signin")     , routes.AccountsController.login(), Some("sign-in-alt"))        
+        } { actor =>
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" href="http://example.com" id="ibs-register-submenu" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+              <img src="@actor.avatarOpt.getOrElse("/assets/images/avatar.png")" class="rounded-circle" alt="avatar" width="36" height="36">
+            </a>
+            <div class="dropdown-menu" aria-labelledby="ibs-register-submenu">
+              @base.common.menuDropDownItem(active, messages("app.header.menu.profile"),          routes.AccountsController.profile(actor.login),  Some("user"))
+              @base.common.menuDropDownItem(active, messages("app.header.menu.profile.settings"), routes.AccountsController.settings(actor.login), Some("cog"))
+              @base.common.menuDropDownItem(active, messages("app.header.menu.logout"),           routes.AccountsController.logout(),              Some("sign-out-alt"))
+            </div>
+          </li>        
         }
       </ul>
     </div>

@@ -30,6 +30,24 @@ class Authorizable @Inject() (
 
   val SESSION_KEY = "session_key"
 
+  protected def accessToAccount[T](login: String)(f: models.Account => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
+    authorizedNotLocked { actor =>
+      dao.getUserProfileInfoByLogin(login) flatMap {
+        _.fold(future(BadRequest("Account with login " + login + " not found!"))) { a =>
+          if (a.id == actor.id || actor.isAdmin)
+            f(a)
+          else
+            future(BadRequest("You are not authorized to this action"))
+        }
+      }
+    }
+
+  protected def authorizedNotLocked[T](notAuthorized: Future[Result])(f: models.Account => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
+    onlyAuthorized(notAuthorized)(a => if (a.accountStatus == models.AccountStatus.NORMAL) f(a) else notAuthorized)
+
+  protected def authorizedNotLocked[T](f: models.Account => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
+    onlyAuthorized(a => if (a.accountStatus == models.AccountStatus.NORMAL) f(a) else future(BadRequest("Your account is blocked!")))
+
   protected def onlyAdmin[T](f: models.Account => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
     onlyAdmin(future(Redirect(controllers.routes.AccountsController.login())))(f)
 
@@ -59,6 +77,16 @@ class Authorizable @Inject() (
   // access only if user authorized ???
   protected def onlyAuthorizedOwnerUserOrSelf[T](userId: Option[Long])(f: models.Account => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
     userId.fold(onlyAuthorized(f))(userId => onlyAuthorizedOwnerUser(userId)(f))
+
+  protected def optionalAuthorizedNotLocked[T](f: Option[models.Account] => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
+    request.session.get(SESSION_KEY).fold(f(None))(curSessionKey =>
+      dao.findAccountBySessionKeyAndIPWithRoles(curSessionKey, request.remoteAddress)
+        flatMap (_.fold(f(None))(a => a.sessionOpt.fold(f(None)) { session =>
+          if (a.accountStatus == models.AccountStatus.LOCKED) f(None) else {
+            ac.authorizedOpt = Some(a)
+            f(Some(a))
+          }
+        })))
 
   protected def optionalAuthorized[T](f: Option[models.Account] => Future[Result])(implicit request: Request[T], ac: AppContext): Future[Result] =
     request.session.get(SESSION_KEY).fold(f(None))(curSessionKey =>

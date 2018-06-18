@@ -22,6 +22,7 @@ case class Account(
   val confirmCode: Option[String],
   val roles: Seq[Int],
   val sessionOpt: Option[Session],
+  val avatarOpt: Option[String], 
   val telegramAccountOpt: Option[TelegramAccount]) {
 
   val isAdmin = roles.contains(Roles.ADMIN)
@@ -93,6 +94,7 @@ object Account {
     confirmCode: Option[String],
     roles: Seq[Int],
     sessionOpt: Option[Session],
+    avatarOpt: Option[String],
     telegramAccountOpt: Option[TelegramAccount]): Account =
     new Account(
       id,
@@ -105,6 +107,7 @@ object Account {
       confirmCode,
       roles,
       sessionOpt,
+      avatarOpt,
       telegramAccountOpt)
 
   def apply(
@@ -126,6 +129,7 @@ object Account {
       registered,
       confirmCode,
       Seq.empty[Int],
+      None,
       None,
       None)
 

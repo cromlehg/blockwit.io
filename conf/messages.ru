@@ -6,6 +6,20 @@ app.header.menu.signup = регистрация
 app.header.menu.signin = войти
 app.header.menu.approve = подтвердить
 app.header.menu.regfinish = регистрация завершена
+app.header.menu.profile = профиль
+app.header.menu.profile.settings = настройки
+
+app.profile = Профиль
+app.profile.login = Логин
+app.profile.email = Email
+app.profile.telegram.login = Логин в Telegram
+
+app.profile.settings = Настройки
+app.profile.settings.form.login = Логин
+app.profile.settings.form.email = Email
+app.profile.settings.form.telegram.login = Логин в Telegram
+app.profile.settings.form.update = Обновить
+
 app.register.step1of3 = Шаг 1 из 3
 app.register.step1of3.subheader = Добро пожаловать!
 app.register.step1of3.form.username = Логин

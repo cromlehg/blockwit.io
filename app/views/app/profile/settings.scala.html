@@ -1,0 +1,16 @@
+@(account: models.Account, inForm: Form[_])(implicit flash: Flash, messages: Messages, ac: controllers.AppContext)
+
+@implicitVerticalFC = @{ b4.vertical.fieldConstructor() }
+
+@app.common.commonAuthRegPage(messages("app.header.menu.profile.settings")) {
+
+  <h2 class="mb-4 mt-2">@messages("app.profile.settings")</h2>
+  
+  @b4.form(routes.AccountsController.settingsProcess(account.login)) {
+    @b4.text( inForm("login"),         '_label -> messages("app.profile.settings.form.login"), 'readonly -> true )
+    @b4.text( inForm("email"),         '_label -> messages("app.profile.settings.form.email"), 'readonly -> true )
+    @b4.text( inForm("telegramLogin"), '_label -> messages("app.profile.settings.form.telegram.login") )
+    @b4.submit('_class -> "mt-5", 'class -> "btn btn-outline-primary btn-block"){ @messages("app.profile.settings.form.update") }   
+  }
+  
+}
