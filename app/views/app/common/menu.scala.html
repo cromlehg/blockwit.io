@@ -1,0 +1,27 @@
+@(active: String)(implicit ac: controllers.AppContext, messages: Messages)
+<nav class="navbar navbar-expand-md fixed-top navbar-light bg-light bs-navbar-top">
+  <div class="container">
+    <a class="navbar-brand" href="/">
+     <img src="/assets/images/logo.png" alt="@controllers.AppConstants.APP_NAME" class="navbar-brand-logo"/>
+    </a>
+    <div class="collapse navbar-collapse" id="navbarCollapse">
+      <ul class="navbar-nav mr-auto">
+        @if(ac.authorizedOpt.isDefined) {
+          @if(ac.authorizedOpt.get.isAdmin) {          
+            @base.common.menuItem(active, messages("app.header.menu.options")  , routes.OptionsController.options)
+            @base.common.menuItem(active, messages("app.header.menu.accounts") , routes.AccountsController.adminAccounts(1, None))
+          }
+        } else {         
+        }      
+      </ul>
+      <ul class="navbar-nav ml-auto">
+        @if(ac.authorizedOpt.isDefined) {
+          @base.common.menuItem(active, messages("app.header.menu.logout")     , routes.AccountsController.logout(), Some("sign-out-alt"))
+        } else {         
+          @base.common.menuItem(active, messages("app.header.menu.signup")     , routes.AccountsController.registerUser(), Some("user-plus"))
+          @base.common.menuItem(active, messages("app.header.menu.signin")     , routes.AccountsController.login(), Some("sign-in-alt"))
+        }
+      </ul>
+    </div>
+  </div>
+</nav>

@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS roles;
+
+DROP TABLE IF EXISTS sessions;
+
+DROP TABLE IF EXISTS accounts;
+
+DROP TABLE IF EXISTS short_options;
+
+
