@@ -37,11 +37,14 @@ CREATE TABLE telegram_accounts (
   telegram_login            VARCHAR(100)
 );
 
+
 INSERT INTO accounts VALUES (1,'testadmin','testadmin@project.country','$2a$10$EwrXfFADQmgbfyY54fPMbuWCnmTSbCpl9Rfrkc0.3OrVp/GeBMTp6','confirmed','normal',1529936034487,NULL);
+INSERT INTO accounts VALUES (2,'testclient','testclient@project.country','$2a$10$EwrXfFADQmgbfyY54fPMbuWCnmTSbCpl9Rfrkc0.3OrVp/GeBMTp6','confirmed','normal',1529936034487,NULL);
 
 INSERT INTO short_options VALUES (1,'REGISTER_ALLOWED','Registration allowance','Boolean','true');
 
 INSERT INTO roles VALUES (1,'client');
 INSERT INTO roles VALUES (1,'admin');
+INSERT INTO roles VALUES (2,'client');
 
 
