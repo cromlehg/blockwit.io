@@ -1,3 +1,3 @@
-# Blockwit Web Framework for internal works
-![BWF](logo.png "BWF")
+# Blockwit team official site
+![blockwit](logo.png "blockwit")
 
