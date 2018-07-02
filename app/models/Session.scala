@@ -17,6 +17,8 @@ case class Session(
 
 object Session {
 
+  val TOKEN = "TOKEN"
+
   def apply(
     id: Long,
     userId: Long,

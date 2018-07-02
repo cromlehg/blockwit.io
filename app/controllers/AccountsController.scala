@@ -1,37 +1,50 @@
 package controllers
 
+import java.util.Base64
+import java.util.UUID
+
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.Random
 
 import org.mindrot.jbcrypt.BCrypt
 
-import com.typesafe.config.Config
-
+import AuthRequestToAppContext.ac
+import be.objectify.deadbolt.scala.DeadboltActions
 import javax.inject.Inject
 import javax.inject.Singleton
-import models.daos.DAO
+import models.Account
+import models.ConfirmationStatus
+import models.Role
+import models.Session
+import models.TelegramAccount
+import models.dao.AccountDAO
+import models.dao.SessionDAO
+import models.dao.TelegramAccountDAO
+import play.api.Configuration
 import play.api.data.Form
 import play.api.data.Forms.boolean
 import play.api.data.Forms.email
 import play.api.data.Forms.mapping
 import play.api.data.Forms.nonEmptyText
-import play.api.data.Forms.text
 import play.api.data.Forms.optional
+import play.api.data.Forms.text
+import play.api.i18n.Messages
 import play.api.mvc.ControllerComponents
 import play.api.mvc.Flash
 import play.api.mvc.Request
 import play.api.mvc.Result
 import play.twirl.api.Html
-import play.Logger
-import models.TelegramAccount
 
 @Singleton
 class AccountsController @Inject() (
   cc: ControllerComponents,
-  dao: DAO,
-  config: Config)(implicit ec: ExecutionContext)
-  extends RegisterCommonAuthorizable(cc, dao, config) {
+  deadbolt: DeadboltActions,
+  accountDAO: AccountDAO,
+  sessionDAO: SessionDAO,
+  telegramAccountDAO: TelegramAccountDAO,
+  config: Configuration)(implicit ec: ExecutionContext)
+  extends RegisterCommonAuthorizable(cc, accountDAO, sessionDAO, config) {
 
   import scala.concurrent.Future.{ successful => future }
 
@@ -65,6 +78,11 @@ class AccountsController @Inject() (
     override val email: String,
     override val login: String) extends RegData
 
+  case class RegDataCompany(
+    override val email: String,
+    override val login: String,
+    val companyName: String) extends RegData
+
   val authForm = Form(
     mapping(
       "email" -> nonEmptyText(3, 50),
@@ -83,37 +101,44 @@ class AccountsController @Inject() (
       "email" -> nonEmptyText(4, 100),
       "telegramLogin" -> optional(text))(SettingsData.apply)(SettingsData.unapply))
 
-  def settings(login: String) = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    accessToAccount(login) { a =>
+  private def accessToAccount(login: String)(f: Account => Future[Result])(implicit ac: AppContext): Future[Result] =
+    ac.authorizedOpt.fold(future(BadRequest("Actor account are empty!"))) { actor =>
+      accountDAO.findAccountOptByLogin(login) flatMap {
+        _.fold(future(BadRequest("Account not found " + login))) { account =>
+          if (actor.isAdmin || account.login == login) f(account) else future(BadRequest("You have not access!"))
+        }
+      }
+    }
+
+  def settings(login: String) = deadbolt.SubjectPresent()() { implicit request =>
+    accessToAccount(login) { account =>
       future(Ok(views.html.app.profile.settings(
-        a,
+        ac.authorizedOpt.get,
         settingsForm.fill {
           SettingsData(
-            a.login,
-            a.email,
-            a.telegramAccountOpt.map(_.login))
+            account.login,
+            account.email,
+            account.telegramAccountOpt.map(_.login))
         })))
     }
   }
 
-  def settingsProcess(login: String) = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    accessToAccount(login) { a =>
+  def settingsProcess(login: String) = deadbolt.SubjectPresent()() { implicit request =>
+    accessToAccount(login) { account =>
       settingsForm.bindFromRequest.fold(
-        formWithErrors => future(BadRequest(views.html.app.profile.settings(a, formWithErrors))), {
+        formWithErrors => future(BadRequest(views.html.app.profile.settings(account, formWithErrors))), {
           data =>
             data.telegramLogin.fold {
-              dao.tryToRemoveTelegramLogin(a.id).map { _ =>
+              telegramAccountDAO.tryToRemoveTelegramLogin(account.id).map { _ =>
                 Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully removed!")
               }
             } { telLogin =>
               if (telLogin.trim.isEmpty) {
-                dao.tryToRemoveTelegramLogin(a.id).map { _ =>
+                telegramAccountDAO.tryToRemoveTelegramLogin(account.id).map { _ =>
                   Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully removed!")
                 }
               } else {
-                dao.updateOrCreateTelegramLogin(TelegramAccount(a.id, telLogin)).map { _ =>
+                telegramAccountDAO.updateOrCreateTelegramLogin(TelegramAccount(account.id, telLogin)).map { _ =>
                   Redirect(controllers.routes.AccountsController.settings(login)).flashing("success" -> "Telegram login successfully updated!")
                 }
               }
@@ -122,72 +147,66 @@ class AccountsController @Inject() (
     }
   }
 
-  def profile(login: String) = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    optionalAuthorizedNotLocked { actorOpt =>
-      dao.getUserProfileInfoByLogin(login) flatMap {
-        _.fold(future(BadRequest("Account with login " + login + " not found!"))) { a =>
-          future(Ok(views.html.app.profile.profile(a)))
-        }
+  def login = deadbolt.SubjectNotPresent()() { implicit request =>
+    future(Ok(views.html.app.login(authForm)))
+  }
+
+  def logout = deadbolt.SubjectPresent()() { implicit request =>
+    request.session.get(Session.TOKEN).fold(future(BadRequest("You shuld authorize before"))) { curSessionKey =>
+      sessionDAO.invalidateSessionBySessionKeyAndIP(curSessionKey, request.remoteAddress) map { _ =>
+        Redirect(controllers.routes.AccountsController.login).withNewSession
       }
     }
   }
 
-  def login = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized(future(Ok(views.html.app.login(authForm))))
+  def processLogin = deadbolt.SubjectNotPresent()() { implicit request =>
+    authForm.bindFromRequest.fold(formWithErrors => future(BadRequest(views.html.app.login(formWithErrors))), { authData =>
+      authCheckBlock(authData.email, authData.pass) { msg =>
+        val formWithErrors = authForm.fill(authData)
+        future(BadRequest(views.html.app.login(formWithErrors)(Flash(formWithErrors.data) + ("error" -> msg), implicitly, implicitly)))
+      } {
+        case (account, session) =>
+          future(Redirect(routes.AppController.index))
+      }
+    })
   }
 
-  def logout = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    super.logout(Redirect(controllers.routes.AccountsController.login))
-  }
-
-  def processLogin = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized {
-      authForm.bindFromRequest.fold(formWithErrors => future(BadRequest(views.html.app.login(formWithErrors))), { authData =>
-        authCheckBlock(authData.email, authData.pass) { msg =>
-          val formWithErrors = authForm.fill(authData)
-          future(BadRequest(views.html.app.login(formWithErrors)(Flash(formWithErrors.data) + ("error" -> msg), implicitly, implicitly)))
-        } { case (account, session) => future(Redirect(routes.AppController.index)) }
-      })
+  //FIXME: Only for owner???
+  def profile(login: String) = deadbolt.WithAuthRequest()() { implicit request =>
+    accountDAO.findAccountOptByLogin(login) flatMap {
+      _.fold(future(BadRequest("Account with login " + login + " not found!"))) { a =>
+        future(Ok(views.html.app.profile.profile(a)))
+      }
     }
   }
 
-  def processApproveRegister = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized {
-      approveForm.bindFromRequest.fold(
-        formWithErrors => future(BadRequest(views.html.app.approveRegister(formWithErrors))), {
-          approveData =>
-            if (approveData.pwd == approveData.repwd)
-              dao.findAccountByConfirmCodeAndLogin(approveData.login, approveData.code) flatMap (_.fold(future(BadRequest("Login or confirm code not found"))) { account =>
-                dao.emailVerified(approveData.login, approveData.code, approveData.pwd) map (_.fold(BadRequest("Can't verify email")) { accountVerified =>
-                  Ok(views.html.app.registerFinished())
-                })
+  def processApproveRegister = deadbolt.SubjectNotPresent()() { implicit request =>
+    approveForm.bindFromRequest.fold(
+      formWithErrors => future(BadRequest(views.html.app.approveRegister(formWithErrors))), {
+        approveData =>
+          if (approveData.pwd == approveData.repwd)
+            accountDAO.findAccountOptByConfirmCodeAndLogin(approveData.login, approveData.code) flatMap (_.fold(future(BadRequest("Login or confirm code not found"))) { account =>
+              accountDAO.emailVerified(approveData.login, approveData.code, approveData.pwd) map (_.fold(BadRequest("Can't verify email")) { accountVerified =>
+                Ok(views.html.app.registerFinished())
               })
-            else {
-              val formWithErrors = approveForm.fill(approveData)
-              future(Ok(views.html.app.approveRegister(formWithErrors)(Flash(formWithErrors.data) + ("error" -> "Passwords should be equals"), implicitly, implicitly)))
-            }
-        })
-    }
+            })
+          else {
+            val formWithErrors = approveForm.fill(approveData)
+            future(Ok(views.html.app.approveRegister(formWithErrors)(Flash(formWithErrors.data) + ("error" -> "Passwords should be equals"), implicitly, implicitly)))
+          }
+      })
   }
 
-  def approveRegister(login: String, code: String) = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized {
-      dao.findAccountByConfirmCodeAndLogin(login, code) map (_.fold(BadRequest("Login or confirm code not found")) { account =>
-        Ok(views.html.app.approveRegister(approveForm.fill(ApproveData(
-          login,
-          BCrypt.hashpw(login.toString + code + System.currentTimeMillis() + Random.nextDouble(), BCrypt.gensalt()),
-          null,
-          false,
-          false,
-          code))))
-      })
-    }
+  def approveRegister(login: String, code: String) = deadbolt.SubjectNotPresent()() { implicit request =>
+    accountDAO.findAccountOptByConfirmCodeAndLogin(login, code) map (_.fold(BadRequest("Login or confirm code not found")) { account =>
+      Ok(views.html.app.approveRegister(approveForm.fill(ApproveData(
+        login,
+        BCrypt.hashpw(login.toString + code + System.currentTimeMillis() + Random.nextDouble(), BCrypt.gensalt()),
+        null,
+        false,
+        false,
+        code))))
+    })
   }
 
   private def baseRegisterChecks[T <: RegData](
@@ -195,11 +214,11 @@ class AccountsController @Inject() (
     regForm.bindFromRequest.fold(
       formWithErrors => future(BadRequest(f2(formWithErrors))), {
         userInRegister =>
-          dao.isLoginExists(userInRegister.login) flatMap { isLoginExists =>
+          accountDAO.isLoginExists(userInRegister.login) flatMap { isLoginExists =>
             if (isLoginExists)
               f1("Login already exists!", regForm.fill(userInRegister))
             else
-              dao.isEmailExists(userInRegister.email) flatMap { isEmailExists =>
+              accountDAO.isEmailExists(userInRegister.email) flatMap { isEmailExists =>
                 if (isEmailExists)
                   f1("Email already exists!", regForm.fill(userInRegister))
                 else
@@ -210,30 +229,28 @@ class AccountsController @Inject() (
 
   }
 
-  def registerProcessUser() = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized {
+  def registerProcessUser() = deadbolt.SubjectNotPresent()() { implicit request =>
 
-      def redirectWithError(msg: String, form: Form[_]) =
-        future(Ok(views.html.app.registerUser(form)(Flash(form.data) + ("error" -> msg), implicitly, implicitly)))
+    def redirectWithError(msg: String, form: Form[_]) =
+      future(Ok(views.html.app.registerUser(form)(Flash(form.data) + ("error" -> msg), implicitly, implicitly)))
 
-      baseRegisterChecks(regFormUser)(redirectWithError)(t => views.html.app.registerUser(t)) { (target, login, email) =>
-        createAccount("sendgrid.letter", login, email) { account =>
-          Ok(views.html.app.registerProcess())
-        }
+    baseRegisterChecks(regFormUser)(redirectWithError)(t => views.html.app.registerUser(t)) { (target, login, email) =>
+      createAccount("sendgrid.letter", login, email) { account =>
+        Ok(views.html.app.registerProcess())
       }
-
     }
+
   }
 
-  def registerUser() = Action.async { implicit request =>
-    implicit val ac = new AppContext()
-    notAuthorized {
-      future(Ok(views.html.app.registerUser(regFormUser)))
-    }
+  def registerUser = deadbolt.SubjectNotPresent()() { implicit request =>
+    future(Ok(views.html.app.registerUser(regFormUser)))
   }
 
-  def adminAccounts(pageId: Int, filterOpt: Option[String]) = Action.async { implicit request =>
+  def denied = deadbolt.WithAuthRequest()() { implicit request =>
+    future(Forbidden(views.html.app.denied()))
+  }
+
+  def adminAccounts(pageId: Int, filterOpt: Option[String]) = deadbolt.RoleBasedPermissions(Role.ADMIN)() { implicit request =>
     if (filterOpt.isDefined && !filterOpt.get.matches("[a-z0-9]{1,}")) {
       future(request.headers.get("referer")
         .fold {
@@ -244,38 +261,69 @@ class AccountsController @Inject() (
             .flashing("error" -> "Search string must contains only a-b or 0-9 symbols!")
         })
     } else {
-      implicit val ac = new AppContext()
-      onlyAdmin(a =>
-        dao.getAccountsPagesCount(filterOpt) flatMap { pagesCount =>
-          if (pageId > pagesCount) future(BadRequest("Page not found " + pageId)) else
-            dao.getAdminAccounts(filterOpt, pageId) map { accounts =>
-              Ok(views.html.app.adminAccounts(
-                a,
-                accounts,
-                pageId,
-                pagesCount,
-                filterOpt))
-            }
-        })
+      accountDAO.findAccountsFilteredByNamePagesCount(filterOpt) flatMap { pagesCount =>
+        if (pageId > pagesCount) future(BadRequest("Page not found " + pageId)) else
+          accountDAO.findAccountsFilteredByNamePage(filterOpt, pageId) map { accounts =>
+            Ok(views.html.app.adminAccounts(
+              ac.authorizedOpt.get,
+              accounts,
+              pageId,
+              pagesCount,
+              filterOpt))
+          }
+      }
     }
   }
 
-  def setAccountStatus(accountId: Long, status: Int) = Action.async { implicit request =>
-    models.AccountStatus.strById(status).fold(future(BadRequest("Wrong status id " + status))) { _ =>
-      implicit val ac = new AppContext()
-      onlyAdmin(account =>
-        dao.setAccountStatus(accountId, status) map { success =>
-          if (success)
-            (request.headers.get("referer")
-              .fold(Redirect(controllers.routes.AppController.index)) { url => Redirect(url) })
-              .flashing("error" -> ("New status has been set for account with id  " + accountId))
-          else
-            (request.headers.get("referer")
-              .fold(Redirect(controllers.routes.AppController.index)) { url => Redirect(url) })
-              .flashing("error" -> ("Can't set new status for account with id " + accountId))
-        })
+  def setAccountStatus(accountId: Long, statusStr: String) = deadbolt.RoleBasedPermissions(Role.ADMIN)() { implicit request =>
+    models.AccountStatus.valueOf(statusStr).fold(future(BadRequest("Wrong status " + statusStr))) { status =>
+      accountDAO.setAccountStatus(accountId, status) map { success =>
+        if (success)
+          (request.headers.get("referer")
+            .fold(Redirect(controllers.routes.AppController.index)) { url => Redirect(url) })
+            .flashing("error" -> ("New status has been set for account with id  " + accountId))
+        else
+          (request.headers.get("referer")
+            .fold(Redirect(controllers.routes.AppController.index)) { url => Redirect(url) })
+            .flashing("error" -> ("Can't set new status for account with id " + accountId))
+      }
     }
   }
+
+  protected def authCheckBlock(loginOrEmail: String, pwd: String)(error: String => Future[Result])(success: (models.Account, models.Session) => Future[Result])(implicit request: Request[_]): Future[Result] =
+    accountDAO.findAccountOptByLoginOrEmail(loginOrEmail) flatMap (_.fold(error(Messages("app.login.error"))) { account =>
+      if (account.confirmationStatus == ConfirmationStatus.WAIT_CONFIRMATION)
+        error("Email waiting for confirmation!")
+      else if (account.accountStatus == models.AccountStatus.LOCKED)
+        error("Account locked!")
+      else
+        account.hash.fold(error(Messages("app.login.error"))) { hash =>
+
+          if (BCrypt.checkpw(pwd, hash)) {
+            def createSession = {
+              val expireTime = System.currentTimeMillis + AppConstants.SESSION_EXPIRE_TYME
+              val sessionKey = UUID.randomUUID.toString + "-" + account.id
+
+              sessionDAO.create(
+                account.id,
+                request.remoteAddress,
+                sessionKey,
+                System.currentTimeMillis,
+                expireTime) flatMap (_.fold(future(BadRequest("Coludn't create session"))) { session =>
+                  val token = new String(Base64.getEncoder.encode(sessionKey.getBytes))
+                  success(account, session).map(_.withSession(Session.TOKEN -> token))
+                })
+            }
+
+            request.session.get(Session.TOKEN).fold(createSession)(curSessionKey =>
+              sessionDAO.findSessionByAccountIdSessionKeyAndIP(account.id, request.remoteAddress, curSessionKey)
+                flatMap (_.fold(createSession)(session => error("You should logout before."))))
+
+          } else error(Messages("app.login.error"))
+
+        }
+
+    })
 
 }
 

@@ -36,3 +36,8 @@ CREATE TABLE telegram_accounts (
   account_id                BIGINT UNSIGNED NOT NULL PRIMARY KEY,
   telegram_login            VARCHAR(100)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+INSERT INTO short_options VALUES (1,'REGISTER_ALLOWED','Registration allowance','Boolean','true');
+
+
+

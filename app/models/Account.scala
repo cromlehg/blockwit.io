@@ -1,31 +1,32 @@
 package models
 
+import java.util.Date
+
 import org.joda.time.DateTime
 import org.joda.time.DateTimeZone
 import org.joda.time.LocalDateTime
 
-import play.api.libs.json.JsValue
-import play.api.libs.json.Json
-import play.api.libs.json.JsObject
-import controllers.AppConstants
-import controllers.AppContext
-import java.util.Date
+import be.objectify.deadbolt.scala.models.Subject
 
 case class Account(
   val id: Long,
   val login: String,
   val email: String,
   val hash: Option[String],
-  val confirmationStatus: Int,
-  val accountStatus: Int,
+  val confirmationStatus: ConfirmationStatus.ConfirmationStatus,
+  val accountStatus: AccountStatus.AccountStatus,
   val registered: Long,
   val confirmCode: Option[String],
-  val roles: Seq[Int],
+  override val roles: List[be.objectify.deadbolt.scala.models.Role],
   val sessionOpt: Option[Session],
-  val avatarOpt: Option[String], 
-  val telegramAccountOpt: Option[TelegramAccount]) {
+  val avatarOpt: Option[String],
+  val telegramAccountOpt: Option[TelegramAccount]) extends Subject {
 
-  val isAdmin = roles.contains(Roles.ADMIN)
+  override val identifier = login
+
+  override val permissions = List.empty
+
+  val isAdmin = roles.map(_.name).contains(RoleName.ADMIN.toString)
 
   val ldt = new LocalDateTime(registered, DateTimeZone.UTC)
 
@@ -44,23 +45,6 @@ case class Account(
   def getRegistered(zone: String): DateTime = getRegistered.toDateTime(DateTimeZone forID zone)
 
   def getRegistered: LocalDateTime = ldt
-
-  def toJsonAuth(inJsObj: JsObject)(implicit ac: AppContext): JsObject = {
-    var jsObj = inJsObj ++ Json.obj("email" -> email)
-    jsObj = confirmCode.fold(jsObj) { t => jsObj ++ Json.obj("confirm_code" -> t) }
-    jsObj
-  }
-
-  def toJson(implicit ac: AppContext): JsObject = {
-    var jsObj = Json.obj(
-      "id" -> id,
-      "login" -> login,
-      "account_status" -> AccountStatus.strById(accountStatus),
-      "confirmation_status" -> ConfirmationStatus.strById(confirmationStatus),
-      "registered" -> registered,
-      "login" -> login)
-    ac.authorizedOpt.fold(jsObj)(_ => toJsonAuth(jsObj))
-  }
 
   def loginMatchedBy(filterOpt: Option[String]): String =
     filterOpt.fold(login) { filter =>
@@ -81,6 +65,30 @@ case class Account(
 
 }
 
+object ConfirmationStatus extends Enumeration() {
+
+  type ConfirmationStatus = Value
+
+  val WAIT_CONFIRMATION = Value("wait confirmation")
+
+  val CONFIRMED = Value("confirmed")
+
+}
+
+object AccountStatus extends Enumeration {
+
+  type AccountStatus = Value
+
+  val NORMAL = Value("normal")
+
+  val LOCKED = Value("locked")
+
+  def valueOf(name: String) = this.values.find(_.toString == name)
+
+  def isAccountStatus(s: String) = values.exists(_.toString == s)
+
+}
+
 object Account {
 
   def apply(
@@ -88,11 +96,11 @@ object Account {
     login: String,
     email: String,
     hash: Option[String],
-    confirmationStatus: Int,
-    accountStatus: Int,
+    confirmationStatus: ConfirmationStatus.ConfirmationStatus,
+    accountStatus: AccountStatus.AccountStatus,
     registered: Long,
     confirmCode: Option[String],
-    roles: Seq[Int],
+    roles: List[be.objectify.deadbolt.scala.models.Role],
     sessionOpt: Option[Session],
     avatarOpt: Option[String],
     telegramAccountOpt: Option[TelegramAccount]): Account =
@@ -115,8 +123,8 @@ object Account {
     login: String,
     email: String,
     hash: Option[String],
-    confirmationStatus: Int,
-    accountStatus: Int,
+    confirmationStatus: ConfirmationStatus.ConfirmationStatus,
+    accountStatus: AccountStatus.AccountStatus,
     registered: Long,
     confirmCode: Option[String]): Account =
     new Account(
@@ -128,7 +136,7 @@ object Account {
       accountStatus,
       registered,
       confirmCode,
-      Seq.empty[Int],
+      List.empty[be.objectify.deadbolt.scala.models.Role],
       None,
       None,
       None)
