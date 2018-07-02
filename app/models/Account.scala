@@ -26,7 +26,7 @@ case class Account(
 
   override val permissions = List.empty
 
-  val isAdmin = roles.map(_.name).contains(RoleName.ADMIN.toString)
+  val isAdmin = roles.map(_.name).contains(Role.ADMIN)
 
   val ldt = new LocalDateTime(registered, DateTimeZone.UTC)
 

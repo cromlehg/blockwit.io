@@ -105,7 +105,7 @@ class AccountsController @Inject() (
     ac.authorizedOpt.fold(future(BadRequest("Actor account are empty!"))) { actor =>
       accountDAO.findAccountOptByLogin(login) flatMap {
         _.fold(future(BadRequest("Account not found " + login))) { account =>
-          if (actor.isAdmin || account.login == login) f(account) else future(BadRequest("You have not access!"))
+          if (actor.isAdmin || actor.login == login) f(account) else future(BadRequest("You have not access!"))
         }
       }
     }
@@ -250,7 +250,7 @@ class AccountsController @Inject() (
     future(Forbidden(views.html.app.denied()))
   }
 
-  def adminAccounts(pageId: Int, filterOpt: Option[String]) = deadbolt.RoleBasedPermissions(Role.ADMIN)() { implicit request =>
+  def adminAccounts(pageId: Int, filterOpt: Option[String]) = deadbolt.Restrict(List(Array(Role.ADMIN)))() { implicit request =>
     if (filterOpt.isDefined && !filterOpt.get.matches("[a-z0-9]{1,}")) {
       future(request.headers.get("referer")
         .fold {
@@ -275,7 +275,7 @@ class AccountsController @Inject() (
     }
   }
 
-  def setAccountStatus(accountId: Long, statusStr: String) = deadbolt.RoleBasedPermissions(Role.ADMIN)() { implicit request =>
+  def setAccountStatus(accountId: Long, statusStr: String) = deadbolt.Restrict(List(Array(Role.ADMIN)))() { implicit request =>
     models.AccountStatus.valueOf(statusStr).fold(future(BadRequest("Wrong status " + statusStr))) { status =>
       accountDAO.setAccountStatus(accountId, status) map { success =>
         if (success)

@@ -23,11 +23,11 @@ class OptionsController @Inject() (
 
   import scala.concurrent.Future.{ successful => future }
 
-  def options = deadbolt.RoleBasedPermissions(Role.ADMIN)() { implicit request =>
+  def options = deadbolt.Restrict(List(Array(Role.ADMIN)))() { implicit request =>
     shortOptionDAO.getShortOptions map (t => Ok(views.html.app.options(ac.authorizedOpt.get, t)))
   }
 
-  def switchBooleanOption = deadbolt.RoleBasedPermissions(Role.ADMIN)(parse.json) { implicit request =>
+  def switchBooleanOption = deadbolt.Restrict(List(Array(Role.ADMIN)))(parse.json) { implicit request =>
     fieldString("name")(name => shortOptionDAO.getShortOptionByName(name)
       .flatMap(_.fold(future(BadRequest("Not found"))) { option =>
         if (option.ttype != models.ShortOptions.TYPE_BOOLEAN) future(BadRequest("Option must be boolean to switch")) else
